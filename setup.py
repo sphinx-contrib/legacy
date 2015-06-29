@@ -6,34 +6,32 @@ import argdoc
 with open("README.md") as f:
     long_description = f.read()
 
-
-config_info = { "version"      : argdoc.__version__,
-                "packages"     : find_packages(),
+config_info = { "version"          : argdoc.__version__,
+                "packages"         : find_packages(),
+                "long_description" : long_description,
               }
 
 setup(
     name = "argdoc",
+    description  = "Sphinx extension that automatically adds tables describing command-line arguments to autodoc's `:automodule:` directive",
     url          = "",
     download_url = "",
 
-    install_requires = [
-    	                "sphinx>=1.3.1",
-                        "autodoc>=0.3",
-                        ],
-
-    zip_safe = True,
-
-    # metadata for upload to PyPI
     author           = "Joshua Griffin Dunn",
     author_email     = "joshua.g.dunn@gmail.com",
     maintainer       = "Joshua Griffin Dunn",
     maintainer_email = "Joshua Griffin Dunn",
     
-    description = "Sphinx extension that automatically adds tables describing command-line arguments to autodoc's `:automodule:` directive",
-    long_description = long_description,
     license   = "BSD 3-Clause",
     keywords  = "sphinx documentation argparse command-line autodoc",
     platforms = "any", 
+
+    zip_safe = True,
+
+    requires = [
+                "sphinx>=1.3.1",
+                "autodoc>=0.3",
+                ],
     
     tests_require=["nose>=1.0"],
     test_suite = "nose.collector",
