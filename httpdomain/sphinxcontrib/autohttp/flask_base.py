@@ -13,18 +13,15 @@
 import re
 import itertools
 import six
+import collections
 
-from docutils import nodes
 from docutils.parsers.rst import directives
-from docutils.statemachine import ViewList
 
 from sphinx.util import force_decode
 from sphinx.util.compat import Directive
-from sphinx.util.nodes import nested_parse_with_titles
 from sphinx.util.docstrings import prepare_docstring
 from sphinx.pycode import ModuleAnalyzer
 
-from sphinxcontrib import httpdomain
 from sphinxcontrib.autohttp.common import http_directive, import_object
 
 
@@ -59,7 +56,7 @@ def get_routes(app, endpoint=None, order=None):
     for endpoint in endpoints:
         methodrules = {}
         for rule in app.url_map.iter_rules(endpoint):
-            methods = rule.methods.difference(['OPTIONS', 'HEAD'])
+            methods = cleanup_methods(rule.methods)
             path = translate_werkzeug_rule(rule.rule)
             for method in methods:
                 if method in methodrules:
@@ -70,41 +67,51 @@ def get_routes(app, endpoint=None, order=None):
             yield method, paths, endpoint
 
 
+def cleanup_methods(methods):
+    autoadded_methods = frozenset(['OPTIONS', 'HEAD'])
+    if methods <= autoadded_methods:
+        return methods
+    return methods.difference(autoadded_methods)
+
+
 def quickref_directive(method, path, content):
     rcomp = re.compile("^\s*.. :quickref:\s*(?P<quick>.*)$")
     method = method.lower().strip()
     if isinstance(content, six.string_types):
-         content = content.splitlines()
-    description=""
-    name=""
-    ref = path.replace("<","(").replace(">",")").replace("/","-").replace(":","-")
+        content = content.splitlines()
+    description = ""
+    name = ""
+    ref = path.replace("<", "(").replace(">", ")") \
+              .replace("/", "-").replace(":", "-")
     for line in content:
-         qref = rcomp.match(line)
-         if qref:
+        qref = rcomp.match(line)
+        if qref:
             quickref = qref.group("quick")
-            parts = quickref.split(";",1)
-            if len(parts)>1:
+            parts = quickref.split(";", 1)
+            if len(parts) > 1:
                 name = parts[0]
-                description= parts[1]
+                description = parts[1]
             else:
-                description= quickref
+                description = quickref
             break
 
-    row ={}
+    row = {}
     row['name'] = name
-    row['operation'] = '      - `%s %s <#%s-%s>`_' % (method.upper(), path, method.lower(), ref)
+    row['operation'] = '      - `%s %s <#%s-%s>`_' % (
+        method.upper(), path, method.lower(), ref)
     row['description'] = description
 
     return row
 
-class AutoflaskBase(Directive):
 
+class AutoflaskBase(Directive):
     has_content = True
     required_arguments = 1
     option_spec = {'endpoints': directives.unchanged,
                    'blueprints': directives.unchanged,
                    'modules': directives.unchanged,
                    'order': directives.unchanged,
+                   'groupby': directives.unchanged,
                    'undoc-endpoints': directives.unchanged,
                    'undoc-blueprints': directives.unchanged,
                    'undoc-modules': directives.unchanged,
@@ -160,13 +167,25 @@ class AutoflaskBase(Directive):
             raise ValueError('Invalid value for :order:')
         return order
 
-    def make_rst(self, qref=False):
-        app = import_object(self.arguments[0])
+    @property
+    def groupby(self):
+        groupby = self.options.get('groupby', None)
+        if not groupby:
+            return frozenset()
+        return frozenset(re.split(r'\s*,\s*', groupby))
+
+    def inspect_routes(self, app):
+        """Inspects the views of Flask.
+
+        :param app: The Flask application.
+        :returns: 4-tuple like ``(method, paths, view_func, view_doc)``
+        """
         if self.endpoints:
             routes = itertools.chain(*[get_routes(app, endpoint, self.order)
-                    for endpoint in self.endpoints])
+                                       for endpoint in self.endpoints])
         else:
             routes = get_routes(app, order=self.order)
+
         for method, paths, endpoint in routes:
             try:
                 blueprint, _, endpoint_internal = endpoint.rpartition('.')
@@ -179,12 +198,13 @@ class AutoflaskBase(Directive):
 
             if endpoint in self.undoc_endpoints:
                 continue
+
             try:
-                static_url_path = app.static_url_path # Flask 0.7 or higher
+                static_url_path = app.static_url_path  # Flask 0.7 or higher
             except AttributeError:
-                static_url_path = app.static_path # Flask 0.6 or under
+                static_url_path = app.static_path      # Flask 0.6 or under
             if ('undoc-static' in self.options and endpoint == 'static' and
-                static_url_path + '/(path:filename)' in paths):
+                    static_url_path + '/(path:filename)' in paths):
                 continue
             view = app.view_functions[endpoint]
 
@@ -194,19 +214,41 @@ class AutoflaskBase(Directive):
             if self.undoc_modules and view.__module__ in self.modules:
                 continue
 
-            docstring = view.__doc__ or ''
-            if hasattr(view, 'view_class'):
-                meth_func = getattr(view.view_class, method.lower(), None)
-                if meth_func and meth_func.__doc__:
-                    docstring = meth_func.__doc__
-            if not isinstance(docstring, six.text_type):
-                analyzer = ModuleAnalyzer.for_module(view.__module__)
-                docstring = force_decode(docstring, analyzer.encoding)
+            view_class = getattr(view, 'view_class', None)
+            if view_class is None:
+                view_func = view
+            else:
+                view_func = getattr(view_class, method.lower(), None)
 
-            if not docstring and 'include-empty-docstring' not in self.options:
+            view_doc = view.__doc__ or ''
+            if view_func and view_func.__doc__:
+                view_doc = view_func.__doc__
+
+            if not isinstance(view_doc, six.text_type):
+                analyzer = ModuleAnalyzer.for_module(view.__module__)
+                view_doc = force_decode(view_doc, analyzer.encoding)
+
+            if not view_doc and 'include-empty-docstring' not in self.options:
                 continue
-            docstring = prepare_docstring(docstring)
-            if qref == True:
+
+            yield (method, paths, view_func, view_doc)
+
+    def groupby_view(self, routes):
+        view_to_paths = collections.OrderedDict()
+        for method, paths, view_func, view_doc in routes:
+            view_to_paths.setdefault(
+                (method, view_func, view_doc), []).extend(paths)
+        for (method, view_func, view_doc), paths in view_to_paths.items():
+            yield (method, paths, view_func, view_doc)
+
+    def make_rst(self, qref=False):
+        app = import_object(self.arguments[0])
+        routes = self.inspect_routes(app)
+        if 'view' in self.groupby:
+            routes = self.groupby_view(routes)
+        for method, paths, view_func, view_doc in routes:
+            docstring = prepare_docstring(view_doc)
+            if qref:
                 for path in paths:
                     row = quickref_directive(method, path, docstring)
                     yield row
