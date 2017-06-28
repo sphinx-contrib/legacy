@@ -108,7 +108,5 @@ class AutobottleDirective(Directive):
 
 
 def setup(app):
-    if 'http' not in app.domains:
-        httpdomain.setup(app)
+    app.setup_extension('sphinxcontrib.httpdomain')
     app.add_directive('autobottle', AutobottleDirective)
-
