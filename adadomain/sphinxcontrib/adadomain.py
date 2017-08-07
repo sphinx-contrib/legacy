@@ -11,6 +11,8 @@
     Some parts of the code copied from erlangdomain by SHIBUKAWA Yoshiki.
 """
 
+from __future__ import print_function
+
 import re
 import string
 
@@ -87,7 +89,7 @@ class AdaObject(ObjectDescription):
     def _handle_function_signature(self, sig, signode):
         m = ada_func_sig_re.match(sig)
         if m is None:
-            print "m did not match the function"
+            print("m did not match the function")
             raise ValueError
 
         modname, name, dummy, arglist, returntype, abstract = m.groups()
@@ -136,7 +138,7 @@ class AdaObject(ObjectDescription):
     def _handle_procedure_signature(self, sig, signode):
         m = ada_proc_sig_re.match(sig)
         if m is None:
-            print "m did not match"
+            print("m did not match")
             raise ValueError
 
         modname, name, dummy, arglist, abstract = m.groups()
@@ -177,7 +179,7 @@ class AdaObject(ObjectDescription):
     def _handle_type_signature(self, sig, signode):
         m = ada_type_sig_re.match(sig)
         if m is None:
-            print "m did not match"
+            print("m did not match")
             raise ValueError
 
         name, value = m.groups()
@@ -369,7 +371,8 @@ class AdaModuleIndex(Index):
         ignores = self.domain.env.config['modindex_common_prefix']
         ignores = sorted(ignores, key=len, reverse=True)
         # list of all modules, sorted by module name
-        modules = sorted(self.domain.data['modules'].iteritems(),
+        # (Python 3 has no iteritems, so use items.)
+        modules = sorted(self.domain.data['modules'].items(),
                          key=lambda x: x[0].lower())
         # sort out collapsable modules
         prev_modname = ''
@@ -418,7 +421,8 @@ class AdaModuleIndex(Index):
         collapse = len(modules) - num_toplevels < num_toplevels
 
         # sort by first letter
-        content = sorted(content.iteritems())
+        # (Python 3 has no iteritems, so use items.)
+        content = sorted(content.items())
 
         return content, collapse
 
@@ -457,20 +461,23 @@ class AdaDomain(Domain):
     ]
 
     def clear_doc(self, docname):
-        for fullname, (fn, _) in self.data['objects'].items():
+        # Python 3's "items" is a view, not a copy, and modifying the dict
+        # while iterating over the view is unsafe, so enforce copying by making
+        # lists from the views.
+        for fullname, (fn, _) in list(self.data['objects'].items()):
             if fn == docname:
                 del self.data['objects'][fullname]
-        for modname, (fn, _, _, _) in self.data['modules'].items():
+        for modname, (fn, _, _, _) in list(self.data['modules'].items()):
             if fn == docname:
                 del self.data['modules'][modname]
-        for fullname, funcs in self.data['functions'].items():
-            for arity, (fn, _) in funcs.items():
+        for fullname, funcs in list(self.data['functions'].items()):
+            for arity, (fn, _) in list(funcs.items()):
                 if fn == docname:
                     del self.data['functions'][fullname][arity]
             if not self.data['functions'][fullname]:
                 del self.data['functions'][fullname]
-        for fullname, funcs in self.data['procedures'].items():
-            for arity, (fn, _) in funcs.items():
+        for fullname, funcs in list(self.data['procedures'].items()):
+            for arity, (fn, _) in list(funcs.items()):
                 if fn == docname:
                     del self.data['procedures'][fullname][arity]
             if not self.data['procedures'][fullname]:
@@ -533,7 +540,8 @@ class AdaDomain(Domain):
                                     contnode, name)
 
     def get_objects(self):
-        for refname, (docname, type) in self.data['objects'].iteritems():
+        # Python 3 has no iteritems, so use items.
+        for refname, (docname, type) in self.data['objects'].items():
             yield (refname, refname, type, docname, refname, 1)
 
 def setup(app):
